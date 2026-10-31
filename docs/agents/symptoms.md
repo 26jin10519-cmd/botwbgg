@@ -255,6 +255,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - a native-texture movie jumps ahead for one picture and returns: every 17 pictures, each exactly 16 ahead (one cycle of the video output slots), the picture before it never shown. Text burnt into the movie shows the line being typed half a second later for one frame. → [A native-texture movie shows a picture 16 frames ahead, then goes back](../reference/movies.md#a-native-texture-movie-shows-a-picture-16-frames-ahead-then-goes-back)
 - the game crashed on a null right after the failed open. → [`movie::Extractor` runs natively](../reference/movies.md#movieextractor-runs-natively)
 - VP8 WebM movies play black; `movie::Decoder` is created with decoder type 2. → [VP8 uses the same libvpx worker and output paths](../reference/movies.md#vp8-uses-the-same-libvpx-worker-and-output-paths)
+- a Switch 2 game crashes when a movie starts: `nn::codec::video::Initialize` faults in the SDK (Donkey Kong Bananza: `sdk+0x2de99c`, after its first punch, when the guide movie starts), and before that `nv::InitCheck` aborts (`hle_nv.c`). → [`nn::codec` video decoders taken over](../reference/movies.md#nncodec-video-decoders-taken-over)
 
 ## Audio
 
