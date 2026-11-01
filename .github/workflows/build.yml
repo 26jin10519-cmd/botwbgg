@@ -19,13 +19,13 @@ jobs:
         with:
           submodules: recursive
 
-      # 2. 필수 빌드 의존성 및 패키지 설치
+     # 2. 필수 빌드 의존성 및 패키지 설치
       - name: Install Build Dependencies
         run: |
           brew install xcodegen zstd glslang
           brew install --cask dotnet-sdk
-          python3 -m pip install --upgrade pip
-          python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic
+          python3 -m pip install --upgrade pip --break-system-packages
+          python3 -m pip install --break-system-packages lz4 "capstone>=5,<6" fonttools nsz zbic
 
       # 3. GitHub Secret에서 prod.keys 복원
       - name: Setup prod.keys
