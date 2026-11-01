@@ -27,24 +27,30 @@ jobs:
           python3 -m pip install --upgrade pip --break-system-packages
           python3 -m pip install --break-system-packages lz4 "capstone>=5,<6" fonttools nsz zbic
 
-      # 3. GitHub Secret에서 prod.keys 복원
+    # 3. prod.keys 복원 및 형식 검증
       - name: Setup prod.keys
+        env:
+          PROD_KEYS_B64: ${{ secrets.PROD_KEYS }}
         run: |
           mkdir -p keys
-          echo "${{ secrets.PROD_KEYS }}" > keys/prod.keys
+          echo "$PROD_KEYS_B64" | tr -d '\r' | base64 --decode > keys/prod.keys
+          
+          echo "=== 키 파일 무결성 체크 ==="
+          ls -lh keys/prod.keys
+          grep -i "header_key" keys/prod.keys || { echo "ERROR: header_key 없음"; exit 1; }
 
-      # 4. Hugging Face Dataset에서 14GB NSP 파일 다운로드
+      # 4. 다운로드 및 파일 유효성 검사
       - name: Download Game Dump from Hugging Face
         run: |
           mkdir -p Games/TargetGame
-          echo "Hugging Face에서 게임 파일 다운로드 시작..."
           curl -L -f \
             -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
             -o "Games/TargetGame/${{ github.event.inputs.file_name }}" \
             "https://huggingface.co/datasets/mangonam/botwbggg-data/resolve/main/${{ github.event.inputs.file_name }}"
-          
-          # 다운로드 파일 정상 유무 및 용량 확인
+
+          echo "=== 다운로드 파일 체크 ==="
           ls -lh Games/TargetGame/
+          file "Games/TargetGame/${{ github.event.inputs.file_name }}"
 
       # 5. nxnative 빌드 스크립트 실행 (NSP -> IPA 변환)
       - name: Build IPA from NSP
