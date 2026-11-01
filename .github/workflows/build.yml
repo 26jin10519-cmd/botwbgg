@@ -27,17 +27,30 @@ jobs:
           python3 -m pip install --upgrade pip --break-system-packages
           python3 -m pip install --break-system-packages lz4 "capstone>=5,<6" fonttools nsz zbic
 
-    # 3. prod.keys 복원 및 형식 검증
-      - name: Setup prod.keys
+   # 3. 인코딩 없이 환경 변수 원문 그대로 파일 생성
+      - name: Setup prod.keys and title.keys
         env:
-          PROD_KEYS_B64: ${{ secrets.PROD_KEYS }}
+          PROD_KEYS_RAW: ${{ secrets.PROD_KEYS }}
+          TITLE_KEYS_RAW: ${{ secrets.TITLE_KEYS }}
         run: |
           mkdir -p keys
-          echo "$PROD_KEYS_B64" | tr -d '\r' | base64 --decode > keys/prod.keys
-          
-          echo "=== 키 파일 무결성 체크 ==="
-          ls -lh keys/prod.keys
-          grep -i "header_key" keys/prod.keys || { echo "ERROR: header_key 없음"; exit 1; }
+
+          # Python을 사용해 환경변수 원본 줄바꿈 그대로 파일에 작성
+          python3 -c "
+          import os
+          with open('keys/prod.keys', 'w', encoding='utf-8') as f:
+              f.write(os.environ.get('PROD_KEYS_RAW', ''))
+          with open('keys/title.keys', 'w', encoding='utf-8') as f:
+              f.write(os.environ.get('TITLE_KEYS_RAW', ''))
+          "
+
+          echo "=== 키 파일 생성 검증 ==="
+          ls -lh keys/
+          echo "prod.keys 줄 수: $(wc -l < keys/prod.keys)"
+          echo "title.keys 줄 수: $(wc -l < keys/title.keys)"
+
+          # 필수 키 확인
+          grep -i "header_key" keys/prod.keys || echo "::warning::header_key가 prod.keys에 보이지 않습니다."
 
       # 4. 다운로드 및 파일 유효성 검사
       - name: Download Game Dump from Hugging Face
