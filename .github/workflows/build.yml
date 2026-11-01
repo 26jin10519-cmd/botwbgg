@@ -65,9 +65,12 @@ jobs:
           ls -lh Games/TargetGame/
           file "Games/TargetGame/${{ github.event.inputs.file_name }}"
 
-      # 5. nxnative 빌드 스크립트 실행 (NSP -> IPA 변환)
+    # 5. 빌드 실행 (keys 폴더 지정 또는 prod.keys 지정)
       - name: Build IPA from NSP
         run: |
+          # title.keys 내용도 prod.keys 하단에 병합해 둘 경우 인식률이 가장 높습니다.
+          cat keys/title.keys >> keys/prod.keys
+
           python3 scripts/build_ipa_from_nsp.py Games/TargetGame -k keys/prod.keys
 
       # 6. 생성된 IPA 파일 아티팩트로 업로드
