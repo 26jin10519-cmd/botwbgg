@@ -1,24 +1,60 @@
 name: Build nxnative IPA
-on: workflow_dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_name:
+        description: 'botw.nsp'
+        required: true
+        default: 'botw.nsp'
 
 jobs:
   build:
     runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install Dependencies
+    steps:
+      # 1. 저장소 코드 체크아웃
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 2. 필수 빌드 의존성 및 패키지 설치
+      - name: Install Build Dependencies
         run: |
           brew install xcodegen zstd glslang
           brew install --cask dotnet-sdk
+          python3 -m pip install --upgrade pip
           python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic
 
-      - name: Run Build Script
+      # 3. GitHub Secret에서 prod.keys 복원
+      - name: Setup prod.keys
         run: |
-          python3 scripts/build_ipa_from_nsp.py ./Games/MyGame -k ./keys/prod.keys
+          mkdir -p keys
+          echo "${{ secrets.PROD_KEYS }}" > keys/prod.keys
 
-      - name: Upload IPA
+      # 4. Hugging Face Dataset에서 14GB NSP 파일 다운로드
+      - name: Download Game Dump from Hugging Face
+        run: |
+          mkdir -p Games/TargetGame
+          echo "Hugging Face에서 게임 파일 다운로드 시작..."
+          curl -L -f \
+            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            -o "Games/TargetGame/${{ github.event.inputs.file_name }}" \
+            "https://huggingface.co/datasets/mangonam/botwbggg-data/resolve/main/${{ github.event.inputs.file_name }}"
+          
+          # 다운로드 파일 정상 유무 및 용량 확인
+          ls -lh Games/TargetGame/
+
+      # 5. nxnative 빌드 스크립트 실행 (NSP -> IPA 변환)
+      - name: Build IPA from NSP
+        run: |
+          python3 scripts/build_ipa_from_nsp.py Games/TargetGame -k keys/prod.keys
+
+      # 6. 생성된 IPA 파일 아티팩트로 업로드
+      - name: Upload Built IPA
         uses: actions/upload-artifact@v4
         with:
-          name: game-ipa
-          path: ./Games/MyGame/*.ipa
+          name: nxnative-game-ipa
+          path: Games/TargetGame/*.ipa
+          retention-days: 7
