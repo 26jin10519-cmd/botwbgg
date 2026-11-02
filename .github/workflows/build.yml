@@ -65,8 +65,10 @@ jobs:
           ls -lh Games/TargetGame/
           file "Games/TargetGame/${{ github.event.inputs.file_name }}"
 
-       # 5. nxnative 빌드 스크립트 실행 (--allow-other-metal 추가)
+      # nxnative 빌드 스크립트 실행 (환경 변수 및 플래그 동시 적용)
       - name: Build IPA from NSP
+        env:
+          ALLOW_OTHER_METAL: "True"
         run: |
           python3 scripts/build_ipa_from_nsp.py Games/TargetGame -k keys/prod.keys --allow-other-metal
 
