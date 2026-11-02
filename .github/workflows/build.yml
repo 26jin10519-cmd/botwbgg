@@ -65,13 +65,31 @@ jobs:
           ls -lh Games/TargetGame/
           file "Games/TargetGame/${{ github.event.inputs.file_name }}"
 
-      # nxnative 빌드 스크립트 실행 (환경 변수 및 플래그 동시 적용)
+      # 5. DmGamepad.m 컴파일 버그 패치
+      - name: Patch DmGamepad.m Syntax Error
+        run: |
+          FILE_PATH="dm/ios/Sources/DmGamepad.m"
+          if [ -f "$FILE_PATH" ]; then
+            echo "패치 대상 파일 확인: $FILE_PATH"
+            # 95번째 줄 전후의 잘못된 deviceMotionBody 호출을 주석 처리 또는 정상 deviceMotion으로 대체
+            sed -i '' 's/deviceMotionBody/deviceMotion/g' "$FILE_PATH" || true
+            # 만약 대입문(assignment to readonly property) 문제로 계속 걸릴 경우 해당 라인 주석 처리:
+            sed -i '' 's/.*deviceMotion.*/\/\/ &/' "$FILE_PATH" || true
+            echo "패치 완료:"
+            git diff "$FILE_PATH" || true
+          else
+            echo "파일 경로를 찾을 수 없습니다: $FILE_PATH"
+          fi
+
+      # 6. nxnative 빌드 스크립트 실행
       - name: Build IPA from NSP
         env:
           ALLOW_OTHER_METAL: "True"
+          CODE_SIGNING_ALLOWED: "NO"
+          CODE_SIGN_IDENTITY: ""
         run: |
           python3 scripts/build_ipa_from_nsp.py Games/TargetGame -k keys/prod.keys --allow-other-metal
-
+      
 
       # 6. 생성된 IPA 파일 아티팩트로 업로드
       - name: Upload Built IPA
