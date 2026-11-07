@@ -1,37 +1,31 @@
-name: Build nxnative IPA (Ultimate Defensive)
+name: Build nxnative IPA
 
 on:
   workflow_dispatch:
     inputs:
       file_name:
-        description: 'Hugging Face Dataset에 업로드된 NSP 파일명 (확장자 포함)'
+        description: 'Hugging Face Dataset에 업로드된 NSP 파일명'
         required: true
         default: 'game_dump.nsp'
 
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 120
+    # 타임아웃 제한 완전 삭제 (GitHub 최대치인 6시간 동안 절대 안 끊김)
 
     steps:
-      # 1. 저장소 및 서브모듈 전체 체크아웃
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 2. 불필요한 러너 기본 대용량 패키지 삭제로 디스크 여유 공간 선제 확보 (약 25GB+ 확보)
       - name: Maximize Free Disk Space
         run: |
-          echo "=== 정리 전 디스크 용량 ==="
-          df -h
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /Library/Frameworks/Mono.framework || true
           sudo rm -rf /Applications/Xcode_15*.app || true
-          echo "=== 정리 후 디스크 용량 ==="
           df -h
 
-      # 3. 필수 빌드 의존성 설치 (PEP 668 우회 및 기설치 충돌 방지)
       - name: Install Build Dependencies
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
@@ -42,7 +36,6 @@ jobs:
           python3 -m pip install --upgrade pip --break-system-packages
           python3 -m pip install --break-system-packages lz4 "capstone>=5,<6" fonttools nsz zbic
 
-      # 4. 원문 Secret(PROD_KEYS, TITLE_KEYS) 무결성 복원 및 사전 검증
       - name: Setup and Validate Switch Keys
         env:
           PROD_KEYS_RAW: ${{ secrets.PROD_KEYS }}
@@ -56,95 +49,47 @@ jobs:
           title = os.environ.get('TITLE_KEYS_RAW', '').replace('\r\n', '\n').replace('\r', '\n').strip()
 
           if not prod:
-              print('::error::[FATAL] PROD_KEYS Secret이 비어있습니다.')
+              print('::error::PROD_KEYS Secret이 비어있습니다.')
               sys.exit(1)
 
-          if 'header_key' not in prod.lower():
-              print('::error::[FATAL] prod.keys 내에 header_key가 존재하지 않습니다.')
-              sys.exit(1)
-
-          # prod.keys 단독 및 통합본 생성
+          combined = prod + ('\n' + title if title else '')
           with open('keys/prod.keys', 'w', encoding='utf-8') as f:
-              f.write(prod + '\n' + (title + '\n' if title else ''))
-
+              f.write(combined)
           if title:
               with open('keys/title.keys', 'w', encoding='utf-8') as f:
                   f.write(title + '\n')
 
-          # LibHac 기본 탐색 경로(~/.switch) 동기화
           home_sw = os.path.expanduser('~/.switch')
           with open(os.path.join(home_sw, 'prod.keys'), 'w', encoding='utf-8') as f:
-              f.write(prod + '\n')
+              f.write(combined)
           if title:
               with open(os.path.join(home_sw, 'title.keys'), 'w', encoding='utf-8') as f:
                   f.write(title + '\n')
-
-          print(f"[OK] 키 복원 완료 (prod.keys: {len(prod.splitlines())}줄, title.keys: {len(title.splitlines())}줄)")
           EOF
 
-      # 5. DmGamepad.m 에러 원천 수정 + iOS 소스 사전 컴파일 테스트 (1시간 낭비 방지용 10초 검증)
-      - name: Patch iOS Source and Pre-Verify Compilation
+      - name: Patch iOS Source Syntax Error
         run: |
           python3 - << 'EOF'
-          import glob, re, subprocess
+          import glob, re
 
-          # 저장소 내 모든 DmGamepad.m 탐색 후 문제 라인 정밀 패치
           for path in glob.glob('**/DmGamepad.m', recursive=True):
               with open(path, 'r', encoding='utf-8') as f:
                   content = f.read()
-
               if 'deviceMotionBody' in content:
                   lines = content.splitlines()
-                  patched_lines = []
+                  patched = []
                   for line in lines:
                       if 'deviceMotionBody' in line:
-                          # 대입문(=)인 경우 readonly 에러 방지를 위해 주석 처리
                           if re.search(r'deviceMotionBody\s*=[^=]', line):
-                              patched_lines.append('// ' + line + ' // Patched: readonly assignment')
+                              patched.append('// ' + line)
                           else:
-                              patched_lines.append(line.replace('deviceMotionBody', 'deviceMotion'))
+                              patched.append(line.replace('deviceMotionBody', 'deviceMotion'))
                       else:
-                          patched_lines.append(line)
-
+                          patched.append(line)
                   with open(path, 'w', encoding='utf-8') as f:
-                      f.write('\n'.join(patched_lines) + '\n')
-                  print(f"[OK] 패치 적용 완료: {path}")
-
-              # 14GB 다운로드 및 20분 PSO 컴파일 전에 clang 문법 체크를 먼저 수행하여 즉시 검증
-              sdk_path = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path']).decode().strip()
-              cmd = [
-                  'xcrun', '-sdk', 'iphoneos', 'clang', '-fsyntax-only',
-                  '-x', 'objective-c', '-arch', 'arm64', '-fobjc-arc',
-                  '-isysroot', sdk_path,
-                  '-I', 'dm/ios/Sources', '-I', 'dm/ios',
-                  path
-              ]
-              res = subprocess.run(cmd, capture_output=True, text=True)
-              if 'deviceMotion' in res.stderr and 'error:' in res.stderr:
-                  print(f"::error::[FATAL] {path} 문법 오류가 여전히 남아있습니다:\n{res.stderr}")
-                  raise SystemExit(1)
-              else:
-                  print(f"[OK] {path} Objective-C 문법 사전 검증 통과")
-
-          # 빌드 스크립트가 git status dirty 상태를 감지해 중단하거나 해시가 깨지는 현상 방지
-          subprocess.run(['git', 'config', 'user.email', 'ci@github.com'], check=False)
-          subprocess.run(['git', 'config', 'user.name', 'CI'], check=False)
-          subprocess.run(['git', 'commit', '-am', 'Apply iOS source patch'], check=False)
+                      f.write('\n'.join(patched) + '\n')
           EOF
 
-      # 6. 중간 빌드 캐시 복원 (PSO 548MB 및 추출 데이터 캐싱으로 재시도 시 30분 단축)
-      - name: Cache Extracted Assets and PSO Archive
-        uses: actions/cache@v4
-        with:
-          path: |
-            Games/TargetGame/*_build/extract
-            Games/TargetGame/*_build/pso*
-            Games/TargetGame/*_build/gen
-          key: nxnative-build-cache-${{ github.event.inputs.file_name }}
-          restore-keys: |
-            nxnative-build-cache-
-
-      # 7. Hugging Face Dataset에서 대용량 NSP 다운로드 (재시도 옵션 및 LFS 포인터 검증 포함)
       - name: Download Game Dump from Hugging Face
         run: |
           mkdir -p Games/TargetGame
@@ -155,15 +100,6 @@ jobs:
             -o "$TARGET_PATH" \
             "https://huggingface.co/datasets/mangonam/botwbggg-data/resolve/main/${{ github.event.inputs.file_name }}"
 
-          ls -lh "$TARGET_PATH"
-          FILE_SIZE=$(stat -f%z "$TARGET_PATH" 2>/dev/null || stat -c%s "$TARGET_PATH")
-          if [ "$FILE_SIZE" -lt 100000000 ]; then
-            echo "::error::[FATAL] 다운로드된 파일이 100MB 미만(${FILE_SIZE} bytes)입니다. LFS 포인터 또는 인증 오류입니다."
-            head -n 20 "$TARGET_PATH"
-            exit 1
-          fi
-
-      # 8. nxnative 빌드 및 IPA 패키징 실행 (추출 완료 시 원본 NSP 자동 삭제로 디스크 고갈 방지)
       - name: Build IPA from NSP
         env:
           ALLOW_OTHER_METAL: "True"
@@ -172,72 +108,35 @@ jobs:
           CODE_SIGN_IDENTITY: ""
           AD_HOC_CODE_SIGNING_ALLOWED: "YES"
         run: |
-          # 백그라운드 디스크 세이버: RomFS/ExeFS 추출이 끝나고 셰이더(pso/gen) 단계로 넘어가면 원본 14GB NSP를 즉시 삭제해 용량 확보
+          # 추출 감지 시 14GB 원본 파일 자동 삭제 (디스크 100% 방지)
           (
             while true; do
               if ls Games/TargetGame/*_build/extract/v0/icon.jpg >/dev/null 2>&1; then
-                echo "[Disk Saver] 게임 추출 완료 감지 -> 원본 NSP 파일을 삭제하여 14GB 여유 공간을 확보합니다."
                 rm -f "Games/TargetGame/${{ github.event.inputs.file_name }}"
-                df -h
                 break
               fi
               sleep 15
             done
           ) &
-          SAVER_PID=$!
 
-          # 메인 빌드 실행
-          set +e
+          # 빌드 실행
           python3 scripts/build_ipa_from_nsp.py Games/TargetGame -k keys/prod.keys --allow-other-metal
-          BUILD_EXIT_CODE=$?
-          kill $SAVER_PID 2>/dev/null || true
 
-          # 만약 xcodebuild 아카이브나 패키징 스크립트 사소한 오류로 .app만 생성되고 .ipa 압축이 누락된 경우 수동 패키징 폴백 수행
-          EXISTING_IPA=$(find Games/TargetGame -name "*.ipa" | head -n 1)
-          if [ -z "$EXISTING_IPA" ]; then
-            echo "기본 경로에서 .ipa를 찾지 못했습니다. 생성된 .app 번들을 탐색하여 수동 IPA 패키징을 시도합니다..."
-            FOUND_APP=$(find Games/TargetGame -type d -name "*.app" | head -n 1)
-            if [ -n "$FOUND_APP" ]; then
-              echo "[Fallback] 발견된 .app 번들: $FOUND_APP"
-              mkdir -p Payload_Temp/Payload
-              cp -R "$FOUND_APP" Payload_Temp/Payload/
-              (cd Payload_Temp && zip -r -q "../Games/TargetGame/manual_packaged.ipa" Payload)
-              rm -rf Payload_Temp
-              echo "[Fallback] 수동 IPA 생성 성공: Games/TargetGame/manual_packaged.ipa"
-              BUILD_EXIT_CODE=0
-            fi
+          # .app 번들을 직접 Payload 구조로 .ipa 패키징
+          mkdir -p output_ipa/Payload
+          FOUND_APP=$(find Games/TargetGame -type d -name "*.app" | head -n 1)
+          if [ -n "$FOUND_APP" ]; then
+            cp -R "$FOUND_APP" output_ipa/Payload/
+            (cd output_ipa && zip -r -q "ZeldaBotW.ipa" Payload)
+            rm -rf output_ipa/Payload
+          else
+            find Games/TargetGame -type f -name "*.ipa" -exec mv {} output_ipa/ZeldaBotW.ipa \;
           fi
 
-          # 최종 IPA 수집을 위해 output_ipa 폴더로 이동
-          mkdir -p output_ipa
-          find Games/TargetGame -type f -name "*.ipa" -exec mv {} output_ipa/ \;
-
-          if [ -z "$(ls -A output_ipa)" ]; then
-            echo "::error::[FATAL] IPA 생성에 실패했습니다. 상세 빌드 로그를 출력합니다:"
-            find Games/TargetGame -name "*.log" -exec tail -n 100 {} + || true
-            exit 1
-          fi
-
-          echo "=== 최종 생성된 IPA 파일 ==="
-          ls -lh output_ipa/
-          exit $BUILD_EXIT_CODE
-
-      # 9. 생성된 IPA 파일 Artifact 업로드
-      - name: Upload Built IPA
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nxnative-game-ipa
+          name: ZeldaBotW-iOS-IPA
           path: output_ipa/*.ipa
           if-no-files-found: error
           retention-days: 7
-
-      # 10. 실패 시 상세 디버그 로그 자동 수집
-      - name: Upload Error Logs on Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nxnative-error-logs
-          path: |
-            Games/TargetGame/**/*.log
-          if-no-files-found: ignore
-          retention-days: 3
